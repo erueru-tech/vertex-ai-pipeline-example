@@ -1,0 +1,106 @@
+name: build-deploy
+description: deploy components and pipelines
+
+inputs:
+  project_id:
+    description: project_id
+    required: true
+  project_number:
+    description: project_number
+    required: true
+  bucket_uri:
+    description: storage bucket uri for the build
+    required: true
+  workload_identity_provider:
+    description: Workload Identity Provider ID
+    required: true
+  service_account:
+    description: SA for the workflow
+    required: true
+  test_run:
+    description: should the test code be run
+    required: false
+    default: false
+  deploy_pipeline:
+    description: should the pipeline be deployed
+    required: false
+    default: false
+  components_image_version:
+    description: components image version
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: install Python
+      # v5.3.0 ref. https://github.com/actions/setup-python/releases/tag/v5.3.0
+      uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b
+      with:
+        python-version: "3.11.10"
+
+    - name: install CLI tools
+      shell: bash
+      run: |
+        pipx install ruff==0.8.1 mypy==1.13.0 poetry==1.8.4
+
+    - name: run static code analysis
+      if: ${{ inputs.test_run == 'true' }}
+      shell: bash
+      run: |
+        ruff check
+        mypy .
+
+    - name: auth for Google Cloud
+      # v2.1.7 ref. https://github.com/google-github-actions/auth/releases/tag/v2.1.7
+      id: auth-for-google-cloud
+      uses: google-github-actions/auth@6fc4af4b145ae7821d527454aa9bd537d1f2dc5f
+      with:
+        token_format: access_token
+        workload_identity_provider: ${{ inputs.workload_identity_provider }}
+        service_account: ${{ inputs.service_account }}
+
+    - name: run poetry install
+      shell: bash
+      run: |
+        poetry install --no-interaction --no-ansi
+
+    - name: run pytest tests
+      if: ${{ inputs.test_run == 'true' }}
+      shell: bash
+      run: poetry run pytest tests/
+
+    - name: deploy the components image
+      shell: bash
+      env:
+        # gcloud builds submitコマンドは --quiet, --suppress-logs, > /dev/nullを指定しようが絶対にプロジェクト番号を出力しようとする
+        # そのためsecretsにプロジェクト番号を設定して、以下のようにenvで指定することで無理やり****に置き換えている
+        # このワークアラウンドはプライベートリポジトリであればやる必要はない
+        # TODO GHAの実行履歴を特定の開発者にしか見せない設定あるような気がしているので調査
+        PROJEC_NUMBER: ${{ inputs.project_number }}
+      run: |
+        gcloud builds submit --tag us-central1-docker.pkg.dev/${{ inputs.project_id }}/pipeline/components:github-${{ inputs.components_image_version }} --gcs-log-dir=${{ inputs.bucket_uri }}/build
+
+    - name: deploy calculation1 pipeline and configure the scheduler
+      if: ${{ inputs.deploy_pipeline == 'true' }}
+      shell: bash
+      run: |
+        # PipelineJob.create_schedule実行時にプロジェクト番号が標準出力に表示されてしまうため、"> /dev/null"で標準出力ログのみを出力しないようにしている
+        poetry run python -m src.pipelines.calculation1 -s --pause --v1 1.0 --v2 2.0 > /dev/null
+      env:
+        PROJECT_ID: ${{ inputs.project_id }}
+        STAGING_BUCKET: ${{  inputs.bucket_uri }}
+        SERVICE_ACCOUNT: ${{ inputs.service_account }}
+        COMPONENTS_IMAGE_VERSION: github-${{ inputs.components_image_version }}
+        ACCESS_TOKEN: ${{ steps.auth-for-google-cloud.outputs.access_token }}
+
+    - name: deploy calculation2 pipeline and configure the scheduler
+      if: ${{ inputs.deploy_pipeline == 'true' }}
+      shell: bash
+      run: |
+        poetry run python -m src.pipelines.calculation2 -s --pause --v1 2.0 > /dev/null
+      env:
+        PROJECT_ID: ${{ inputs.project_id }}
+        STAGING_BUCKET: ${{  inputs.bucket_uri }}
+        SERVICE_ACCOUNT: ${{ inputs.service_account }}
+        COMPONENTS_IMAGE_VERSION: github-${{ inputs.components_image_version }}
+        ACCESS_TOKEN: ${{ steps.auth-for-google-cloud.outputs.access_token }}
