@@ -1,0 +1,22 @@
+# ref. https://docs.astral.sh/ruff/settings/
+
+[lint]
+# 追加ルールの定義
+extend-select = [
+    "UP",  # pyupgrade
+    "D",   # pydocstyle
+]
+
+# D100: public moduleにDocstringが定義されていなくてもエラーとして扱わない
+# D103: public functionにDocstringが定義されていなくてもエラーとして扱わない
+# D104: public packageにDocstringが定義されていなくてもエラーとして扱わない
+# D415: Docstringの最初の行をピリオドで終わらせなければいけないルールは日本語では不要
+ignore = ["D100", "D103", "D104", "D415"]
+
+[format]
+# Docstring内のコードスニペットにフォーマッタを適用
+docstring-code-format = true
+
+[lint.pydocstyle]
+# DocstringをGoogle-styleで記述
+convention = "google"
