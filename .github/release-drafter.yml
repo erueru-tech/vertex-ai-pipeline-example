@@ -1,0 +1,12 @@
+name-template: "$RESOLVED_VERSION"
+change-title-escapes: '\<*_&'
+exclude-labels:
+  - "skip-changelog"
+template: |
+  ## What’s Changed
+
+  以下を対応。
+
+  ## PR
+
+  $CHANGES

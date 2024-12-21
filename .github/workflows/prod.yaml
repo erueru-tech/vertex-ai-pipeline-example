@@ -1,0 +1,50 @@
+name: prod
+
+on:
+  # PRがクローズされた際に実行(ジョブ側のif条件との組み合わせで、PRマージのタイミングでのみ実行される)
+  pull_request:
+    branches:
+      - main
+    types: [closed]
+
+permissions: {}
+
+jobs:
+  build-deploy:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-22.04
+    permissions:
+      id-token: write
+      contents: read
+      actions: read
+    steps:
+      - name: checkout project
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: bind and deploy
+        uses: ./.github/actions/build-deploy
+        with:
+          project_id: ${{ secrets.PROD_PROJECT_ID }}
+          project_number: ${{ secrets.PROD_PROJECT_NUMBER }}
+          bucket_uri: gs://${{ secrets.PROD_BUCKET_NAME }}
+          workload_identity_provider: ${{ secrets.PROD_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.PROD_SERVICE_ACCOUNT }}
+          deploy_pipeline: true
+          components_image_version: ${{ github.sha }}
+
+  slack:
+    if: always() && github.event.pull_request.merged == true
+    runs-on: ubuntu-22.04
+    needs: build-deploy
+    permissions:
+      contents: read
+    steps:
+      - name: checkout project
+        uses: actions/checkout@b4ffde65f46336ab88eb53be808477a3936bae11
+
+      - name: send the workflow result to the slack channel
+        uses: ./.github/actions/slack
+        with:
+          conclusion: ${{ needs.build-deploy.result }}
+          channel_id: ${{ vars.SLACK_CHANNEL_ID }}
+          webhook_url: ${{ secrets.SLACK_WEBHOOK_URL }}
